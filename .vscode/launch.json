@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run gym2 as module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "gymnasium.envs.toy_text.gym2",
+            "cwd": "${workspaceFolder}/.venv/lib/python3.12/site-packages",
+            "justMyCode": false,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
