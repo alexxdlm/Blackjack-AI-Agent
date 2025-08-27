@@ -2,7 +2,7 @@ from collections import defaultdict
 import gymnasium as gym
 import numpy as np
 import pandas as pd
-from gymnasium.envs.toy_text import blackjack
+from gymnasium.envs.toy_text.blackjack import BlackjackEnv
 
 
 class BlackjackAgent:
@@ -17,7 +17,7 @@ class BlackjackAgent:
     ):
 
         self.env = env
-
+        
         # Q-table: maps (state, action) to expected reward
         # defaultdict automatically creates entries with zeros for new states
         self.q_values = defaultdict(lambda: np.zeros(env.action_space.n))
@@ -36,8 +36,10 @@ class BlackjackAgent:
 
 # changed the get_action logic, since it was only apt to split and stick operations
 
-    def get_action(self, obs, allow_split) -> int:
-        if allow_split:
+#TODO this probably can be simplified
+
+    def get_action(self, obs) -> int:
+        if obs[3]:
     
             if np.random.random() < self.epsilon:
                 return self.env.action_space.sample()
@@ -45,6 +47,16 @@ class BlackjackAgent:
         # With probability (1-epsilon): exploit (best known action)
             else:
                 return int(np.argmax(self.q_values[obs]))
+        
+        elif obs[4]:
+            if np.random.random() < self.epsilon:
+                return np.random.choice([0,1,3,4])
+
+            else:
+                q_values = self.q_values[obs].copy()
+                q_values[2]= -np.inf
+
+                return int(np.argmax(q_values))        
         else:
             if np.random.random() < self.epsilon:
                 return np.random.choice([0,1])
@@ -53,6 +65,8 @@ class BlackjackAgent:
                 q_values[2], q_values[3], q_values[4] = -np.inf, -np.inf, -np.inf
 
             return int(np.argmax(q_values))
+
+
 
     def update(
         self,
@@ -76,6 +90,7 @@ class BlackjackAgent:
         # How wrong was our current estimate?
         temporal_difference = target - self.q_values[obs][action]
 
+
         # Update our estimate in the direction of the error
         # Learning rate controls how big steps we take
         self.q_values[obs][action] = (
@@ -92,15 +107,17 @@ class BlackjackAgent:
 
 
 
-learning_rate = 0.001   # How fast to learn (higher = faster but less stable)
-n_episodes = 2_000_000        # Number of hands to practice
+learning_rate = 0.01  # How fast to learn (higher = faster but less stable)
+n_episodes = 100_000        # Number of hands to practice
 start_epsilon = 1.0         # Start with 100% random actions
-epsilon_decay = 2_000_000  # Reduce exploration over time
-final_epsilon = 0.05         # Always keep some exploration
+epsilon_decay = 200_000  # Reduce exploration over time
+final_epsilon = 0.05       # Always keep some exploration
+batch_size = 256
 
 # Create environment and agent
 env = gym.make("Blackjack-v1", sab=False)
 env = gym.wrappers.RecordEpisodeStatistics(env, buffer_length=n_episodes)
+env1 = BlackjackEnv()
 
 agent = BlackjackAgent(
     env=env,
@@ -116,6 +133,7 @@ from tqdm import tqdm  # Progress bar
 # This is where the agent learns
 ################################
 
+
 for episode in tqdm(range(n_episodes)):
     # Start a new hand
     obs, info = env.reset()
@@ -125,11 +143,9 @@ for episode in tqdm(range(n_episodes)):
     # Play one complete hand
     while not done:
         # Agent chooses action (initially random, gradually more intelligent)
-        allow_split = obs[0][0] == obs[0][1] and it == 0
-        action = agent.get_action(obs[1:4], allow_split=allow_split)
+        #allow_split = obs[0][0] == obs[0][1] and it == 0
+        action = agent.get_action(obs[1:])
         next_obs, reward, terminated, truncated, info = env.step(action)
-        """  print(next_obs)
-        print(next_obs[1:4])"""
         it += 1
 
         # stick, hit, dd and surrender are handled by this section
@@ -139,7 +155,7 @@ for episode in tqdm(range(n_episodes)):
 
             # Learn from this experience
             #obs[0] = sorted(obs[0])
-            agent.update(obs[1:4], action, reward, terminated, next_obs[1:4])
+            agent.update(obs[1:], action, reward, terminated, next_obs[1:])
 
             # Move to next state
             done = terminated or truncated
@@ -154,27 +170,27 @@ for episode in tqdm(range(n_episodes)):
 
             # deal with the first hand
             while not done1:
-                action1 = agent.get_action(obs1[1:4], allow_split=False)
+                action1 = agent.get_action(obs1[1:])
                 next_obs1, hand1, terminated1, _, info = env.step(action1)
              #   obs1[0] = sorted(obs1[0])
-                agent.update(obs1[1:4], action1, reward1, terminated1, next_obs1[1:4])
+                agent.update(obs1[1:], action1, reward1, terminated1, next_obs1[1:])
                 obs1 = next_obs1
                 reward1+=hand1
                 done1 = terminated1
 
             #then deal with the second hand
             while not done2:
-                action2 = agent.get_action(obs2[1:4], allow_split=False)
+                action2 = agent.get_action(obs2[1:])
                 next_obs2, hand2, terminated2, _, info = env.step(action2)
               #  obs2[0] = sorted(obs2[0])
-                agent.update(obs2[1:4], action2, reward2, terminated2, next_obs2[1:4])
+                agent.update(obs2[1:], action2, reward2, terminated2, next_obs2[1:])
                 obs2 = next_obs2
                 reward2+=hand2
                 done2 = terminated2
             
             total_split_reward = reward1 + reward2
             #obs[0] = sorted(obs[0])
-            agent.update(obs[1:4], action, total_split_reward, terminated=True, next_obs=obs[1:4])
+            agent.update(obs[1:], action, total_split_reward, terminated=True, next_obs=obs[1:])
             done=True
 
     # Reduce exploration rate (agent becomes less random over time)
@@ -230,7 +246,7 @@ axs[2].set_ylabel("Temporal Difference Error")
 axs[2].set_xlabel("Step")
 
 plt.tight_layout()
-plt.show()
+
 
 
 ##############################################
@@ -238,14 +254,13 @@ plt.show()
 ##############################################
 
 
-def test_agent(agent, env, num_episodes=200000):
+def test_agent(agent, env, num_episodes=10_000):
     """Test agent performance without learning or exploration."""
     total_rewards = []
 
     # Temporarily disable exploration for testing
     old_epsilon = agent.epsilon
     agent.epsilon = 0.0  # Pure exploitation
-    wins, losses, push = 0,0,0
 
     # the approach is the same as the learning part, except we don't update the q table, we just reference it 
     # to choose the best action
@@ -255,8 +270,7 @@ def test_agent(agent, env, num_episodes=200000):
         done = False
         it = 0
         while not done:
-            allow_split = obs[0][0] == obs[0][1] and it == 0
-            action = agent.get_action(obs[1:4], allow_split)
+            action = agent.get_action(obs[1:])
             it+=1
             next_obs, reward, terminated, truncated, info = env.step(action)
             if action != 2:
@@ -265,14 +279,13 @@ def test_agent(agent, env, num_episodes=200000):
                 obs = next_obs
             else:
                 obs1, obs2 = next_obs
-                obs1, obs2 = next_obs
 
                 done1, done2 = False, False
                 reward1, reward2 = 0,0
 
                 #FIRST HAND
                 while not done1:
-                    action1 = agent.get_action(obs1[1:4], allow_split=False)
+                    action1 = agent.get_action(obs1[1:])
 
                     next_obs1, hand1, terminated1, _, info = env.step(action1)
                     obs1 = next_obs1
@@ -281,7 +294,7 @@ def test_agent(agent, env, num_episodes=200000):
 
                 #SECOND HAND
                 while not done2:
-                    action2 = agent.get_action(obs2[1:4], allow_split=False)
+                    action2 = agent.get_action(obs2[1:])
                     
                     next_obs2, hand2, terminated2, _, info = env.step(action2)
                     obs2 = next_obs2
@@ -318,12 +331,13 @@ data = []
 
 
 for (state, q_value) in agent.q_values.items():
-    player_sum, dealer_card, usable_ace = state
     data.append({
-        'player_sum': player_sum,
-        'dealer_card': dealer_card,
-        'usable_ace': usable_ace,
-        'q_value': q_value
+        'state': state,
+        'q0': q_value[0],
+        'q1': q_value[1],
+        'q2': q_value[2],
+        'q3': q_value[3],
+        'q4': q_value[4],
 })
 
 
