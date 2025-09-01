@@ -34,34 +34,33 @@ class BlackjackAgent:
         self.training_error = []
 
 
-# changed the get_action logic, since it was only apt to split and stick operations
 
-#TODO this probably can be simplified
-
-    def get_action(self, obs) -> int:
-        if obs[3]:
+    def get_action(self, state: tuple) -> int:
+        
+        # If split is allowed
+        if state[3]: 
     
             if np.random.random() < self.epsilon:
                 return self.env.action_space.sample()
 
-        # With probability (1-epsilon): exploit (best known action)
             else:
-                return int(np.argmax(self.q_values[obs]))
+                return int(np.argmax(self.q_values[state]))
         
-        elif obs[4]:
+       # if surrender and dd are allowed
+        elif state[4]: 
             if np.random.random() < self.epsilon:
                 return np.random.choice([0,1,3,4])
 
             else:
-                q_values = self.q_values[obs].copy()
+                q_values = self.q_values[state].copy()
                 q_values[2]= -np.inf
-
                 return int(np.argmax(q_values))        
+
         else:
             if np.random.random() < self.epsilon:
                 return np.random.choice([0,1])
             else:
-                q_values = self.q_values[obs].copy()
+                q_values = self.q_values[state].copy()
                 q_values[2], q_values[3], q_values[4] = -np.inf, -np.inf, -np.inf
 
             return int(np.argmax(q_values))
@@ -70,54 +69,45 @@ class BlackjackAgent:
 
     def update(
         self,
-        obs,
+        state: tuple,
         action: int,
         reward: float,
         terminated: bool,
-        next_obs,
+        next_state: tuple,
     ):
-        """Update Q-value based on experience.
 
-        This is the heart of Q-learning: learn from (state, action, reward, next_state)
-        """
-        # What's the best we could do from the next state?
-        # (Zero if episode terminated - no future rewards possible)
-        future_q_value = (not terminated) * np.max(self.q_values[next_obs])
+        future_q_value = (not terminated) * np.max(self.q_values[next_state])
 
-        # What should the Q-value be? (Bellman equation)
         target = reward + self.discount_factor * future_q_value
 
-        # How wrong was our current estimate?
-        temporal_difference = target - self.q_values[obs][action]
+        temporal_difference = target - self.q_values[state][action]
 
 
-        # Update our estimate in the direction of the error
-        # Learning rate controls how big steps we take
-        self.q_values[obs][action] = (
-            self.q_values[obs][action] + self.lr * temporal_difference
+        self.q_values[state][action] = (
+            self.q_values[state][action] + self.lr * temporal_difference
         )
 
         # Track learning progress (useful for debugging)
         self.training_error.append(temporal_difference)
 
     # changed the decay_epsilon function to a non linear approach
+
     def decay_epsilon(self, t):
-        """Reduce exploration rate after each episode."""
-        self.epsilon = max(self.final_epsilon, (self.epsilon * self.epsilon_decay)/ (self.epsilon_decay+t))
+
+        self.epsilon = max(self.final_epsilon, (self.epsilon * self.epsilon_decay)/(self.epsilon_decay+t))
 
 
 
-learning_rate = 0.01  # How fast to learn (higher = faster but less stable)
-n_episodes = 100_000        # Number of hands to practice
-start_epsilon = 1.0         # Start with 100% random actions
-epsilon_decay = 200_000  # Reduce exploration over time
-final_epsilon = 0.05       # Always keep some exploration
-batch_size = 256
+learning_rate = 0.0001 
+start_epsilon = 1.0         
+epsilon_decay = 3_000_000  
+final_epsilon = 0.001      
+n_episodes = 5_000_000
 
-# Create environment and agent
-env = gym.make("Blackjack-v1", sab=False)
+# Create environment and agent following gymnasium's instructions
+
+env = gym.make("Blackjack-v1", sab=False) 
 env = gym.wrappers.RecordEpisodeStatistics(env, buffer_length=n_episodes)
-env1 = BlackjackEnv()
 
 agent = BlackjackAgent(
     env=env,
@@ -133,75 +123,36 @@ from tqdm import tqdm  # Progress bar
 # This is where the agent learns
 ################################
 
+def train_agent(n_episodes: int):
+    for episode in tqdm(range(n_episodes)):
+        # Start a new hand
+        state, _ = env.reset()
+        done = False
+        it = 0
 
-for episode in tqdm(range(n_episodes)):
-    # Start a new hand
-    obs, info = env.reset()
-    done = False
-    it = 0
+        # Play one complete hand
+        while not done:
+            # Agent chooses action (initially random, gradually more intelligent)
 
-    # Play one complete hand
-    while not done:
-        # Agent chooses action (initially random, gradually more intelligent)
-        #allow_split = obs[0][0] == obs[0][1] and it == 0
-        action = agent.get_action(obs[1:])
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        it += 1
-
-        # stick, hit, dd and surrender are handled by this section
-
-        if action != 2: 
-            # Take action and observe result
-
-            # Learn from this experience
-            #obs[0] = sorted(obs[0])
-            agent.update(obs[1:], action, reward, terminated, next_obs[1:])
-
-            # Move to next state
+            action = agent.get_action(state)
+            it += 1
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            agent.update(state, action, reward, terminated, next_state)
             done = terminated or truncated
-            obs = next_obs
+            state = next_state
 
-        # this is the part that handles the more complex split operation 
-           
-        else:
-            obs1, obs2 = next_obs
-            done1, done2 = False, False
-            reward1, reward2 = 0,0
+        # Reduce exploration rate (agent becomes less random over time)
+        agent.decay_epsilon(episode)
 
-            # deal with the first hand
-            while not done1:
-                action1 = agent.get_action(obs1[1:])
-                next_obs1, hand1, terminated1, _, info = env.step(action1)
-             #   obs1[0] = sorted(obs1[0])
-                agent.update(obs1[1:], action1, reward1, terminated1, next_obs1[1:])
-                obs1 = next_obs1
-                reward1+=hand1
-                done1 = terminated1
 
-            #then deal with the second hand
-            while not done2:
-                action2 = agent.get_action(obs2[1:])
-                next_obs2, hand2, terminated2, _, info = env.step(action2)
-              #  obs2[0] = sorted(obs2[0])
-                agent.update(obs2[1:], action2, reward2, terminated2, next_obs2[1:])
-                obs2 = next_obs2
-                reward2+=hand2
-                done2 = terminated2
-            
-            total_split_reward = reward1 + reward2
-            #obs[0] = sorted(obs[0])
-            agent.update(obs[1:], action, total_split_reward, terminated=True, next_obs=obs[1:])
-            done=True
 
-    # Reduce exploration rate (agent becomes less random over time)
-    agent.decay_epsilon(episode)
 
 
 # the following section is the one for plots, didn't touch this
-from matplotlib import pyplot as plt
+"""from matplotlib import pyplot as plt
 
 def get_moving_avgs(arr, window, convolution_mode):
-    """Compute moving average to smooth noisy data."""
+    #Compute moving average to smooth noisy data.
     return np.convolve(
         np.array(arr).flatten(),
         np.ones(window),
@@ -247,63 +198,34 @@ axs[2].set_xlabel("Step")
 
 plt.tight_layout()
 
-
+"""
 
 ##############################################
 # This is where we test how the agent performs
 ##############################################
 
 
-def test_agent(agent, env, num_episodes=10_000):
-    """Test agent performance without learning or exploration."""
+def test_agent(agent, env, num_episodes):
     total_rewards = []
 
-    # Temporarily disable exploration for testing
+    # Disable exploration for testing
     old_epsilon = agent.epsilon
     agent.epsilon = 0.0  # Pure exploitation
 
     # the approach is the same as the learning part, except we don't update the q table, we just reference it 
     # to choose the best action
     for _ in tqdm(range(num_episodes)):
-        obs, info = env.reset()
+        state, _ = env.reset()
         episode_reward = 0
         done = False
         it = 0
         while not done:
-            action = agent.get_action(obs[1:])
+            action = agent.get_action(state)
             it+=1
-            next_obs, reward, terminated, truncated, info = env.step(action)
-            if action != 2:
-                episode_reward += reward
-                done = terminated or truncated
-                obs = next_obs
-            else:
-                obs1, obs2 = next_obs
-
-                done1, done2 = False, False
-                reward1, reward2 = 0,0
-
-                #FIRST HAND
-                while not done1:
-                    action1 = agent.get_action(obs1[1:])
-
-                    next_obs1, hand1, terminated1, _, info = env.step(action1)
-                    obs1 = next_obs1
-                    reward1+=hand1
-                    done1 = terminated1
-
-                #SECOND HAND
-                while not done2:
-                    action2 = agent.get_action(obs2[1:])
-                    
-                    next_obs2, hand2, terminated2, _, info = env.step(action2)
-                    obs2 = next_obs2
-                    reward2+=hand2
-                    done2 = terminated2
-            
-                episode_reward = reward1+reward2
-                done=True
-
+            next_state, reward, terminated, truncated, info = env.step(action)
+            episode_reward += reward
+            done = terminated or truncated
+            state = next_state
 
         total_rewards.append(episode_reward)
 
@@ -318,8 +240,11 @@ def test_agent(agent, env, num_episodes=10_000):
     print(f"Average Reward: {average_reward:.3f}")
     print(f"Standard Deviation: {np.std(total_rewards):.3f}")
 
+
+# Train agent
+train_agent(1_000)
 # Test your agent 
-test_agent(agent, env)
+test_agent(agent, env, 100)
 #print(agent.q_values)
 
 data = []
@@ -329,10 +254,13 @@ data = []
 # this section writes the q values to a csv, for analytical purposes
 
 
-
 for (state, q_value) in agent.q_values.items():
     data.append({
-        'state': state,
+        'player_sum': state[0],
+        'dealer_card': state[1],
+        'usable_ace': state[2],
+        'allow_split': state[3],
+        'allow_dd': state[4],
         'q0': q_value[0],
         'q1': q_value[1],
         'q2': q_value[2],
