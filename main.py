@@ -1,224 +1,105 @@
-import gymnasium as gym
+import cv2
+from computervision import card_classification, card_detection
+import pandas as pd
 import numpy as np
-from collections import defaultdict
-import tqdm
+from blackjack import BlackjackEnv
 
-# Blackjack example
-# Trainin an agent 
+cards_v = {'1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, 
+            '8': 8, '9': 9, '10': 10, '11': 10, '12': 10, '13': 10}
 
-# Infinite deck scenario (no card counting), agent is the only player against the dealer
+actions = {0: "STICK", 1: "HIT", 2: "SPLIT", 3: "SURRENDER", 4: "DOUBLE DOWN"}
 
-class BlackJackAgent:
-    def __init__(
-        self,
-        env: gym.Env,
-        learning_rate: float,
-        initial_epsilon: float,
-        epsilon_decay: float,
-        final_epsilon: float,
-        discount_factor: float = 0.95,
-    ):
+env = BlackjackEnv()
 
-
-        self.env = env
-        self.q_values = defaultdict(lambda: np.zeros(env.action_space.n))
-        self.lr = learning_rate
-        self.epsilon = initial_epsilon
-        self.epsilon_decay = epsilon_decay
-        self.final_epsilon = final_epsilon
-        self.discount_factor = discount_factor
-        self.training_error = []
-
-    def get_action(self, obs: tuple[int, int, bool]) -> int:
-        # balance exploration with experience through greedy epsilon approach
-        
-        # with probability epsilon we act randomly
-
-        if np.random.random() < self.epsilon: 
-            return self.env.action_space.sample()
-
-        #with probabilty 1-epsilon we act following past experience(s)
-
-        else:
-            return int(np.argmax(self.q_values[obs]))
-
-    def update(
-        self, 
-        obs: tuple[int, int, bool],
-        action: int,
-        reward: float,
-        terminated: bool,
-        next_obs: tuple[int, int, bool],
-    ):
-
-        """ This is where the q-values are updated, following the bellman equation"""
-
-        # What's the best we could do from the next state?
-        # (Zero if episode terminated - no future rewards possible)
-        future_q_value = (not terminated) * np.max(self.q_values[next_obs])
-
-        # What should the Q-value be? (Bellman equation)
-        target = reward + self.discount_factor * future_q_value
-
-        # How wrong was our current estimate?
-        temporal_difference = target - self.q_values[obs][action]
-
-        # Update our estimate in the direction of the error
-        # Learning rate controls how big steps we take
-        self.q_values[obs][action] = (
-            self.q_values[obs][action] + self.lr * temporal_difference
-        )
-
-        # Track learning progress (useful for debugging)
-        self.training_error.append(temporal_difference)
-
-    def decay_epsilon(self):
-        """Reduce exploration rate after each episode."""
-        self.epsilon = max(self.final_epsilon, self.epsilon - self.epsilon_decay)
-
-
-# Now we can officially train our agent
-
-learning_rate = 0.01        # How fast to learn (higher = faster but less stable)
-n_episodes = 10        # Number of hands to practice
-start_epsilon = 1.0         # Start with 100% random actions
-epsilon_decay = start_epsilon / (n_episodes / 2)  # Reduce exploration over time
-final_epsilon = 0.1         # Always keep some exploration
-it = 1 
-# create the environment and the agent
-
-env = gym.make("Blackjack-v1", sab = False, render_mode = "human")
-
-env = gym.wrappers.RecordEpisodeStatistics(env, buffer_length=n_episodes)
-
-agent = BlackJackAgent(env=env,
-learning_rate = learning_rate,
-initial_epsilon = start_epsilon,
-epsilon_decay = epsilon_decay,
-final_epsilon = final_epsilon, 
-)
-
-from tqdm import tqdm  # Progress bar
-
-for episode in tqdm(range(n_episodes)):
-    # Start a new hand
-    print(f"We are in episode {it}")
-    obs, info = env.reset()
-    done = False
+def hand_value_and_ace(cards, cards_v):
+    if not cards:
+        return 0, False
     
+    aces = 0
+    tot = 0
 
-    # Play one complete hand
-    while not done:
-        # Agent chooses action (initially random, gradually more intelligent)
-        action = agent.get_action(obs)
-        if action == 0:
-            print("Stick")
+    for rank, suit in cards:
+        if rank == "1":
+            tot += 11
+            aces += 1
         else:
-            print("Hit")
+            tot += cards_v[rank]
 
-        input("Press any key to continue ...")
-        # Take action and observe result
-        next_obs, reward, terminated, truncated, info = env.step(action)
-
-        # Learn from this experience
-        agent.update(obs, action, reward, terminated, next_obs)
-
-        # Move to next state
-        done = terminated or truncated
-        obs = next_obs
-
-    # Reduce exploration rate (agent becomes less random over time)
-    agent.decay_epsilon()
-    it += 1
-    print(f"Reward was {reward}")
-    print(agent.q_values)
-
-from matplotlib import pyplot as plt
-
-def get_moving_avgs(arr, window, convolution_mode):
-    """Compute moving average to smooth noisy data."""
-    return np.convolve(
-        np.array(arr).flatten(),
-        np.ones(window),
-        mode=convolution_mode
-    ) / window
-
-# Smooth over a 500-episode window
-rolling_length = 500
-fig, axs = plt.subplots(ncols=3, figsize=(12, 5))
-
-# Episode rewards (win/loss performance)
-axs[0].set_title("Episode rewards")
-reward_moving_average = get_moving_avgs(
-    env.return_queue,
-    rolling_length,
-    "valid"
-)
-axs[0].plot(range(len(reward_moving_average)), reward_moving_average)
-axs[0].set_ylabel("Average Reward")
-axs[0].set_xlabel("Episode")
-
-# Episode lengths (how many actions per hand)
-axs[1].set_title("Episode lengths")
-length_moving_average = get_moving_avgs(
-    env.length_queue,
-    rolling_length,
-    "valid"
-)
-axs[1].plot(range(len(length_moving_average)), length_moving_average)
-axs[1].set_ylabel("Average Episode Length")
-axs[1].set_xlabel("Episode")
-
-# Training error (how much we're still learning)
-axs[2].set_title("Training Error")
-training_error_moving_average = get_moving_avgs(
-    agent.training_error,
-    rolling_length,
-    "same"
-)
-axs[2].plot(range(len(training_error_moving_average)), training_error_moving_average)
-axs[2].set_ylabel("Temporal Difference Error")
-axs[2].set_xlabel("Step")
-
-plt.tight_layout()
-plt.savefig("training_results.png")
-
-# Test the trained agent
-def test_agent(agent, env, num_episodes=1000):
-    """Test agent performance without learning or exploration."""
-    total_rewards = []
-
-    # Temporarily disable exploration for testing
-    old_epsilon = agent.epsilon
-    agent.epsilon = 0.0  # Pure exploitation
-
-    for _ in range(num_episodes):
-        obs, info = env.reset()
-        episode_reward = 0
-        done = False
-
-        while not done:
-            action = agent.get_action(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            episode_reward += reward
-            done = terminated or truncated
-
-        total_rewards.append(episode_reward)
-
-    # Restore original epsilon
-    agent.epsilon = old_epsilon
-
-    win_rate = np.mean(np.array(total_rewards) > 0)
-    average_reward = np.mean(total_rewards)
-
-    print(f"Test Results over {num_episodes} episodes:")
-    print(f"Win Rate: {win_rate:.1%}")
-    print(f"Average Reward: {average_reward:.3f}")
-    print(f"Standard Deviation: {np.std(total_rewards):.3f}")
-
-# Test your agent
-test_agent(agent, env)
-print(agent.q_values)
-env.close()
+    while aces > 0 and tot > 21:
+        tot -= 10
+        aces -= 1
+    if aces:
+        aces = 1
+    
+    return tot, aces
 
 
+def can_split(cards):
+    return len(cards) == 2 and cards[0][0] == cards[1][0]
+
+q_table = pd.read_csv("models/result_night_800.csv")
+cols = ['player_sum', 'dealer_card', 'usable_ace', 'allow_split', 'allow_dd']
+q_table = q_table.set_index(cols)
+
+
+def main():
+    # We left one image to test the project works. To run it using a video comment out the line 51 (frame = cv2.imread("computervision/images/Games/test3.jpg"))
+    # and uncomment all the lines under //// sign
+
+    # //// uncomment line below if using video
+    #cap = cv2.VideoCapture()
+    frame = cv2.imread("computervision/images/Games/test3.jpg")
+
+    while True:
+        dealers_cards = []
+        players_cards = []
+        # //// uncomment 4 lines below if using video
+        # ret, frame = cap.read()
+        # frame = resized_frame = cv2.resize(frame, (3000, 4000), interpolation=cv2.INTER_LINEAR)
+        # if not ret:
+        #      break
+
+        # split frame in top and bottom half
+        h, w, _ = frame.shape
+        # draw a horizontal line to separate dealer and player
+        cv2.line(frame, (0, h//2), (w, h//2), (0, 255, 0), 2)
+        cv2.putText(frame, f"Dealer's half", (10, h - round(0.97 * h)), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 4)
+        cv2.putText(frame, f"Player's half", (10, h//2 + round(h * 0.03)), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 4)
+        cv2.putText(frame, f"Press q to exit", (10, h - round(0.94 * h)), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 4)
+
+        # process frame
+        ths = card_detection.preprocess(frame)
+        cards_contours, n_of_cards = card_detection.find_cards(ths)
+        if len(cards_contours) > 0:
+            for card_contour in cards_contours:
+                rk, su, x, y = card_classification.preprocess_card(card_contour, frame)
+                rank, suit, rank_diff, suit_diff, up_img = card_classification.match_cards(rk, su, "computervision/images/templates", frame, x, y)
+                if y < h // 2:
+                    dealers_cards.append((rank, suit))
+                else:
+                    players_cards.append((rank, suit))
+                frame = up_img
+
+        players_sum, usable_ace = hand_value_and_ace(players_cards[:2], cards_v)
+        dealers_sum, _ = hand_value_and_ace(dealers_cards[:1], cards_v)
+
+        current_state = (players_sum, dealers_sum, usable_ace, 1 * can_split(players_cards[:2]), 1 * (len(players_cards[:2]) == 2))
+        q_cols = ['q0', 'q1', 'q2', 'q3', 'q4']
+        q_state = q_table.loc[current_state, q_cols]
+
+        masked_q_values = np.where(np.array(env.mask_for(current_state)), q_state.values, -np.inf)
+        best_action = actions[np.argmax(masked_q_values)]
+
+        cv2.putText(frame, f"Best Move:{best_action}", (10, h // 2 + round(0.06 * h)), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 4)
+
+        cv2.imshow("Detected Cards", frame)
+ 
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            # print("Dealer's Cards:", dealers_cards)
+            # print("Player's Cards:", players_cards)
+            break
+    # //// uncomment line below if using video
+    #cap.release()
+    cv2.destroyAllWindows()
+
+main()
